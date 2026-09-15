@@ -8,7 +8,7 @@ services:
   - type: web
     name: agent-dev-assistant-api
     runtime: docker
-    repo: https://github.com/your-org/agent-dev-assistant
+    repo: https://github.com/Ilipilla-Karthik/Agentic-AI-software-dev-debugging-assistant
     dockerfilePath: ./backend/Dockerfile
     plan: starter
     healthCheckPath: /health
