@@ -54,9 +54,11 @@ def _finalize(state: DevState) -> DevState:
 
 def _failed(state: DevState) -> DevState:
     state["status"] = "failed"
+    tr = state.get("test_results", {})
     state["summary"] = (
         f"Pipeline stopped after {state.get('attempts', 0)} debug attempts; "
-        f"tests still failing ({state.get('test_results', {}).get('failed', '?')} failures)."
+        f"tests still failing ({tr.get('failed', 0)} failures, {tr.get('error', 0)} errors). "
+        "Open the Tests tab to see the exact failure - re-run from the project to retry."
     )
     return state
 

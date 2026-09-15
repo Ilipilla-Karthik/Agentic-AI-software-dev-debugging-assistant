@@ -16,10 +16,17 @@ const ORDER: Record<string, number> = {
   debugging: 3,
   reviewing: 4,
   completed: 5,
-  failed: 5,
 };
 
 export default function StatusTimeline({ status }: { status: string }) {
+  if (status === "failed") {
+    return (
+      <div className="rounded-xl border border-bad/50 bg-bad/10 px-4 py-3 text-sm text-bad">
+        Build failed — the tests could not all pass. Open the Tests tab to see what went wrong,
+        then re-run the project.
+      </div>
+    );
+  }
   const current = ORDER[status] ?? 0;
   return (
     <div className="flex items-center justify-between gap-1 rounded-xl border border-line bg-panel p-4">

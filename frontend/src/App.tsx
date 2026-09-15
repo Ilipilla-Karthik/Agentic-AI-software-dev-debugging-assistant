@@ -89,6 +89,13 @@ export default function App() {
 
   const running = selected && ["queued", "running", "planning", "coding", "testing", "debugging", "reviewing"].includes(state?.status ?? "");
 
+  // keep the project list statuses in sync with the DB while something is running
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => void refreshList(), 5000);
+    return () => clearInterval(id);
+  }, [running, refreshList]);
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3">

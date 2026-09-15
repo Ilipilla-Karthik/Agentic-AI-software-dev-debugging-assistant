@@ -184,13 +184,38 @@ class OpenAIProvider(LLMProvider):
         prompt = (
             "Generate a thorough pytest suite (tests/ directory) that validates the "
             "existing application: happy paths, error cases, and validation.\n\n"
+            "IMPORTANT: import ONLY from modules that exist in EXISTING FILES below. "
+            "If a module lives at the project root (e.g. converter.py) and you import it, "
+            "also generate tests/conftest.py that inserts the project root into sys.path "
+            "(dirname(dirname(abspath(__file__)))).\n\n"
             f"TESTING STRATEGY FOR THIS PROJECT:\n{strategy}\n\n"
             "Return ONE raw JSON object of file paths -> contents (e.g. "
             "\"tests/test_app.py\").\n\n"
             f"EXISTING FILES:\n{json.dumps(project_files, indent=2, default=str)[:12000]}"
         )
         raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.3, max_tokens=20000)
-        return parse_fixed_files(raw)
+        tests = parse_fixed_files(raw)
+        if not tests:
+            return {}
+        unresolved = _unresolved_imports(tests, list(project_files))
+        if unresolved:
+            roots = _importable_roots(list(project_files))
+            fix_prompt = (
+                "Your previous test files have imports that do not exist in this project:\n"
+                + "\n".join(f"- {u}" for u in unresolved[:12])
+                + "\n\nAVAILABLE IMPORT ROOTS (import exactly these module paths):\n"
+                + roots
+                + "\n\nRewrite the whole test suite so EVERY local import resolves to one "
+                "AVAILABLE IMPORT ROOT. Flat root modules (e.g. converter.py) need a "
+                "tests/conftest.py that inserts the project root into sys.path. Never "
+                "invent packages that are not listed.\n"
+                'Return ONE raw JSON object of test file paths -> contents.'
+            )
+            retry = await self.complete(_SYSTEM_DEV, fix_prompt, json_mode=True, temperature=0.2, max_tokens=20000)
+            fixed = parse_fixed_files(retry)
+            if fixed:
+                tests = fixed
+        return tests
 
     async def generate_fix(
         self,
@@ -404,6 +429,58 @@ def _fallback_review(data: Any, result: ExecutionResult, requirement: str) -> di
         comments = []
     passed = bool(data.get("passed", score >= 60))
     return {"score": score, "passed": passed, "summary": summary, "comments": comments}
+
+
+def _unresolved_imports(test_files: dict[str, str], project_files: list[str]) -> list[str]:
+    """Find test-file imports that reference modules not present in the project.
+
+    Returns e.g. ['tests/test_converter.py: imports app.converter (no module)'] so the
+    generator can correct the paths instead of the debug loop burning attempts.
+    """
+    import re
+    import sys
+
+    stdlib = frozenset(sys.stdlib_module_names)
+    known_external = frozenset(
+        "fastapi flask django requests httpx aiohttp pytest pytest_asyncio sqlalchemy pydantic "
+        "jwt redis aiosqlite uvicorn starlette numpy pandas scipy matplotlib plotly openai "
+        "click typer PIL pillow dotenv yaml bs4 celery asyncpg pdfkit reportlab xlsxwriter "
+        "openpyxl lxml tqdm jinja2 markdown textblob nltk sklearn torch tensorflow".split()
+    )
+    roots = _top_level_roots(project_files)
+    unresolved: list[str] = []
+    for path, content in test_files.items():
+        for m in re.finditer(r"^\s*from\s+(\S+)\s+import\s+\S+.*$|^\s*import\s+(\S+)", content, re.M):
+            mod = (m.group(1) or m.group(2) or "").split(".")[0]
+            if mod and mod not in stdlib and mod not in known_external and mod not in roots:
+                unresolved.append(f"{path}: imports '{mod}' but no module/dir '{mod}' exists")
+    return unresolved
+
+
+def _top_level_roots(paths: list[str]) -> set[str]:
+    """First path segment of each file -> importable root, e.g. ['app/converter.py'] -> {'app'}."""
+    roots: set[str] = set()
+    for p in paths:
+        if not p.endswith(".py"):
+            continue
+        first = p.split("/", 1)[0]
+        roots.add(first.removesuffix(".py"))
+    return roots
+
+
+def _importable_roots(paths: list[str]) -> str:
+    lines = []
+    for p in sorted(paths):
+        if not p.endswith((".py", "/")):
+            continue
+        if p.lower().startswith("tests/"):
+            continue
+        if p.endswith("/"):
+            lines.append(f"{p} -> package")
+            continue
+        mod = p[:-3].replace("/", ".")
+        lines.append(f"{p} -> module: {mod}")
+    return "\n".join(lines) if lines else "(no python modules found)"
 
 
 def _coerce_architecture(data: Any, requirement: str, analysis: str = "") -> dict[str, Any]:
