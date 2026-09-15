@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b1220;
+  --color-panel: #111a2e;
+  --color-panel-2: #16223a;
+  --color-line: #22304a;
+  --color-ice: #c7d5ee;
+  --color-faint: #7e93b8;
+  --color-brand: #6366f1;
+  --color-ok: #34d399;
+  --color-bad: #f87171;
+  --color-warn: #fbbf24;
+}
+
+body {
+  background-color: var(--color-ink);
+  color: var(--color-ice);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #24334f;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+code, pre, .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.prose-sm h1 { font-size: 1.25rem; font-weight: 700; margin: 0.5rem 0; }
+.prose-sm h2 { font-size: 1.05rem; font-weight: 700; margin: 0.4rem 0; }
+.prose-sm h3 { font-size: 0.95rem; font-weight: 600; margin: 0.3rem 0; }
+.prose-sm ul, .prose-sm ol { margin-left: 1.25rem; list-style: disc; }
+.prose-sm ol { list-style: decimal; }
+.prose-sm p { margin: 0.35rem 0; }
+.prose-sm li { margin: 0.15rem 0; }
+.prose-sm strong { color: #dbe6ff; }
+.prose-sm hr { border-color: var(--color-line); margin: 0.5rem 0; }

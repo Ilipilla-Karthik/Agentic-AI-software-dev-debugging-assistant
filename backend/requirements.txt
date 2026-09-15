@@ -1,0 +1,23 @@
+# Web framework & API
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sse-starlette>=2.1
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# Agent orchestration
+langgraph>=0.2.60
+
+# LLM access (OpenAI-compatible)
+openai>=1.40
+
+# Persistence: SQLite fallback / Postgres production
+sqlalchemy[asyncio]>=2.0.30
+aiosqlite>=0.20
+asyncpg>=0.29
+
+# Agent memory cache
+redis>=5.0
+
+# Async HTTP + test client
+httpx>=0.27

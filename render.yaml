@@ -1,0 +1,33 @@
+# Render Blueprint for the Agentic Dev Assistant backend.
+# Deploy: push this repo to GitHub, then in Render "New > Blueprint" pick the repo.
+#
+# NOTE: persistent disks require a paid instance (Starter $7/mo or higher).
+# The free tier has no persistent disk, so projects/SQLite would be lost on
+# redeploy/restart - upgrade to Starter if you want data to survive.
+services:
+  - type: web
+    name: agent-dev-assistant-api
+    runtime: docker
+    repo: https://github.com/your-org/agent-dev-assistant
+    dockerfilePath: ./backend/Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: WORKSPACE_ROOT
+        value: /workspaces
+      - key: OPENAI_API_KEY
+        sync: false # set in Render dashboard (or via `sync: false` prompts)
+      - key: OPENAI_MODEL
+        value: mistralai/mistral-medium-3.5
+      - key: OPENAI_BASE_URL
+        value: https://api.xkiro.com/v1
+      - key: CORS_ORIGINS
+        value: http://localhost:5173,http://localhost:4173
+      - key: EXECUTION_TIMEOUT
+        value: "300"
+      - key: MAX_DEBUG_ATTEMPTS
+        value: "3"
+    disk:
+      name: workspaces
+      mountPath: /workspaces
+      sizeGB: 1

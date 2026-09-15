@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Env
+.env
+*.env
+!.env.example
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Generated workspaces
+workspaces/
+*.db
+*.sqlite3
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
+# Generated failure analysis sandboxes
+workspaces-fail/
+workspaces-*/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Vite build output
+frontend/dist/

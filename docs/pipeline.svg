@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="260" viewBox="0 0 920 260">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#6366f1"/>
+    </marker>
+  </defs>
+  <rect width="920" height="260" fill="#0b1220" rx="16"/>
+  <g font-family="ui-sans-serif, system-ui, sans-serif" text-anchor="middle">
+    <g>
+      <rect x="30"  y="90" width="140" height="60" rx="10" fill="#16223a" stroke="#6366f1"/>
+      <text x="100" y="116" fill="#c7d5ee" font-size="14" font-weight="bold">Requirements</text>
+      <text x="100" y="134" fill="#7e93b8" font-size="11">Analysis Agent</text>
+    </g>
+    <g>
+      <rect x="220" y="90" width="140" height="60" rx="10" fill="#16223a" stroke="#6366f1"/>
+      <text x="290" y="116" fill="#c7d5ee" font-size="14" font-weight="bold">Architecture</text>
+      <text x="290" y="134" fill="#7e93b8" font-size="11">Architect Agent</text>
+    </g>
+    <g>
+      <rect x="410" y="90" width="140" height="60" rx="10" fill="#16223a" stroke="#6366f1"/>
+      <text x="480" y="116" fill="#c7d5ee" font-size="14" font-weight="bold">Code</text>
+      <text x="480" y="134" fill="#7e93b8" font-size="11">Coding Agent</text>
+    </g>
+    <g>
+      <rect x="600" y="90" width="140" height="60" rx="10" fill="#16223a" stroke="#fbbf24"/>
+      <text x="670" y="116" fill="#c7d5ee" font-size="14" font-weight="bold">Test ⚙ sandbox</text>
+      <text x="670" y="134" fill="#7e93b8" font-size="11">Testing Agent</text>
+    </g>
+    <g>
+      <rect x="790" y="90" width="100" height="60" rx="10" fill="#16223a" stroke="#f87171"/>
+      <text x="840" y="116" fill="#c7d5ee" font-size="14" font-weight="bold">Debug</text>
+      <text x="840" y="134" fill="#7e93b8" font-size="11">Agent</text>
+    </g>
+    <g>
+      <rect x="340" y="185" width="240" height="50" rx="10" fill="#16223a" stroke="#34d399"/>
+      <text x="460" y="206" fill="#c7d5ee" font-size="14" font-weight="bold">Review → Summary</text>
+      <text x="460" y="224" fill="#7e93b8" font-size="11">Code Reviewer Agent</text>
+    </g>
+    <g>
+      <path d="M170,120 H212" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M360,120 H402" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M550,120 H592" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M740,120 H782" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M670,150 V175 H460 V185" stroke="#f87171" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M460,90 V60 H840 V90" stroke="#fbbf24" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+      <text x="652" y="168" fill="#fbbf24" font-size="11">retest</text>
+      <text x="620" y="75" fill="#f87171" font-size="11">failing → debug</text>
+      <path d="M595,120 L590,120" stroke="#6366f1" stroke-width="2"/>
+    </g>
+  </g>
+</svg>

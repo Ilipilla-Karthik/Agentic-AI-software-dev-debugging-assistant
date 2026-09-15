@@ -1,0 +1,21 @@
+# Secrets / local state - never ship into an image
+.env
+*.env
+!.env.example
+
+# Local Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Generated workspaces + databases on the host
+workspaces/
+workspaces-*/
+*.db
+*.sqlite3
+
+# Logs
+*.log
