@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createProject, getProject, listProjects, projectEventsUrl, rerunProject, API_BASE } from "./api";
-import type { LiveEvent, ProjectListItem, ProjectState } from "./types";
+import type { ProjectListItem, ProjectState } from "./types";
 import Panel from "./components/Panel";
 import Markdown from "./components/Markdown";
 import StatusTimeline from "./components/StatusTimeline";
@@ -9,26 +9,14 @@ import TestResults from "./components/TestResults";
 import DiffView from "./components/DiffView";
 import ReviewPanel from "./components/ReviewPanel";
 
-const TABS = ["Overview", "Architecture", "Files", "Tests", "Debug", "Review", "Logs"] as const;
+const TABS = ["Overview", "Architecture", "Files", "Tests", "Fixes", "Review"] as const;
 type Tab = (typeof TABS)[number];
-
-const DEFAULT_REQ =
-  "Create a FastAPI task-management API with PostgreSQL, JWT authentication, CRUD operations, validation, and automated tests.";
-
-function JsonBlock({ data }: { data: unknown }) {
-  return (
-    <pre className="mono max-h-[26rem] overflow-auto rounded-lg border border-line bg-ink p-3 text-xs whitespace-pre-wrap">
-      {JSON.stringify(data, null, 2)}
-    </pre>
-  );
-}
 
 export default function App() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [state, setState] = useState<ProjectState | null>(null);
-  const [events, setEvents] = useState<LiveEvent[]>([]);
-  const [requirement, setRequirement] = useState(DEFAULT_REQ);
+  const [requirement, setRequirement] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("Overview");
   const [health, setHealth] = useState<{ provider: string; memory_backend: string } | null>(null);
@@ -61,17 +49,9 @@ export default function App() {
 
   const startLive = useCallback((id: string) => {
     stopLive();
+    // keep an SSE connection open - it wakes the backend and refreshes state on pings
     const es = new EventSource(projectEventsUrl(id));
     esRef.current = es;
-    es.onmessage = (e) => {
-      if (e.data === "{}") return;
-      try {
-        const ev = JSON.parse(e.data) as LiveEvent;
-        setEvents((prev) => [...prev.slice(-200), ev]);
-      } catch {
-        /* ignore malformed */
-      }
-    };
     pollRef.current = setInterval(() => {
       void getProject(id).then(setState).catch(() => {});
     }, 2500);
@@ -80,7 +60,6 @@ export default function App() {
   const select = useCallback(
     (id: string) => {
       setSelected(id);
-      setEvents([]);
       setTab("Overview");
       void getProject(id).then(setState).catch(() => {});
       startLive(id);
@@ -105,7 +84,6 @@ export default function App() {
   const onRerun = useCallback(async () => {
     if (!selected) return;
     await rerunProject(selected);
-    setEvents([]);
     startLive(selected);
   }, [selected, startLive]);
 
@@ -117,9 +95,13 @@ export default function App() {
         <div>
           <h1 className="text-xl font-bold text-ice">Agentic Dev Assistant</h1>
           <p className="text-xs text-faint">
-            Autonomous plan → code → test → debug → review pipeline ·{" "}
-            <span className="mono">
-              {health ? `provider=${health.provider} · memory=${health.memory_backend}` : "checking backend..."}
+            Describe an idea in your own words and the assistant plans it, builds it, tests it, and reviews it.
+            <span className="mono ml-2">
+              {health
+                ? health.provider === "openai"
+                  ? "AI engine: online"
+                  : "AI engine: demo mode"
+                : "checking engine..."}
             </span>
           </p>
         </div>
@@ -137,15 +119,15 @@ export default function App() {
           onChange={(e) => setRequirement(e.target.value)}
           rows={2}
           className="w-full resize-none rounded-lg border border-line bg-ink p-3 text-sm text-ice outline-none focus:border-brand"
-          placeholder="Describe the software you want generated, tested, and reviewed..."
+          placeholder="e.g. Build a CLI that converts temperatures between Celsius and Fahrenheit"
         />
         <div className="mt-3 flex items-center justify-between">
           <div className="text-[11px] text-faint">
-            Without an OpenAI key the built-in mock provider runs the full loop end-to-end (free).
+            The assistant generates real code, runs the tests, fixes any failures, and gives you a review score.
           </div>
           <button
             onClick={() => void submit()}
-            disabled={busy}
+            disabled={busy || !requirement.trim()}
             className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             {busy ? "Starting..." : "Run Pipeline"}
@@ -205,27 +187,9 @@ export default function App() {
 
               {running && (
                 <div className="rounded-lg border border-brand/40 bg-brand/10 px-4 py-2 text-xs text-brand animate-pulse">
-                  Workflow in progress — stage updates streaming live below.
+                  Workflow in progress — planning, coding, testing, and reviewing your idea.
                 </div>
               )}
-
-              {/* live feed */}
-              <Panel title="Live Stage Feed" badge={<span className="text-xs text-faint">{events.length} events</span>}>
-                <div className="max-h-44 space-y-1 overflow-y-auto">
-                  {events.length === 0 && <p className="text-xs text-faint">Waiting for events...</p>}
-                  {events.map((ev, i) => (
-                    <div key={i} className="flex items-start gap-2 text-xs">
-                      <span className="mono mt-0.5 shrink-0 rounded bg-panel-2 px-1.5 py-0.5 text-[10px] text-brand">
-                        {ev.stage}
-                      </span>
-                      <span className="text-ice">{ev.message}</span>
-                      <span className="mono ml-auto shrink-0 text-[10px] text-faint">
-                        {new Date(ev.ts).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </Panel>
 
               {/* tabs */}
               <div className="flex flex-wrap items-center gap-1 border-b border-line pb-2">
@@ -298,15 +262,7 @@ function TabContent({ tab, state }: { tab: Tab; state: ProjectState }) {
         </div>
       );
     case "Architecture":
-      return (
-        <Panel title="Architecture Plan">
-          {state.architecture && Object.keys(state.architecture).length ? (
-            <JsonBlock data={state.architecture} />
-          ) : (
-            <p className="text-sm text-faint">Architecture pending...</p>
-          )}
-        </Panel>
-      );
+      return <ArchitectureView architecture={state.architecture} />;
     case "Files":
       return (
         <>
@@ -324,7 +280,7 @@ function TabContent({ tab, state }: { tab: Tab; state: ProjectState }) {
       );
     case "Tests":
       return <TestResults results={state.test_results} />;
-    case "Debug":
+    case "Fixes":
       return (
         <div className="space-y-4">
           <DiffView diffs={state.diffs} />
@@ -345,13 +301,84 @@ function TabContent({ tab, state }: { tab: Tab; state: ProjectState }) {
       );
     case "Review":
       return <ReviewPanel review={state.review} />;
-    case "Logs":
-      return (
-        <Panel title="Agent Execution Logs">
-          <pre className="mono max-h-96 overflow-auto rounded-lg border border-line bg-ink p-3 text-xs whitespace-pre-wrap text-faint">
-            {(state.logs ?? []).join("\n") || "No logs yet."}
-          </pre>
-        </Panel>
-      );
   }
+}
+
+function ArchitectureView({ architecture }: { architecture?: Record<string, unknown> }) {
+  if (!architecture || Object.keys(architecture).length === 0) {
+    return <Panel title="Architecture Plan">Designing the architecture...</Panel>;
+  }
+  const stack = Array.isArray(architecture.stack) ? (architecture.stack as string[]) : [];
+  const modules = (architecture.modules && typeof architecture.modules === "object" && !Array.isArray(architecture.modules)
+    ? (architecture.modules as Record<string, string>)
+    : {}) as Record<string, string>;
+  const apis = Array.isArray(architecture.apis) ? (architecture.apis as Record<string, unknown>[]) : [];
+  const models = Array.isArray(architecture.data_models) ? (architecture.data_models as Record<string, unknown>[]) : [];
+  const deps = architecture.dependencies && typeof architecture.dependencies === "object" && !Array.isArray(architecture.dependencies)
+    ? (architecture.dependencies as Record<string, string>)
+    : {};
+  const rationale = typeof architecture.rationale === "string" ? architecture.rationale : "";
+
+  return (
+    <div className="space-y-4">
+      <Panel title="Architecture Plan" badge={stack.length ? <span className="text-xs text-faint">{stack.join(" · ")}</span> : undefined}>
+        {rationale && <p className="text-sm text-ice">{rationale}</p>}
+      </Panel>
+
+      {Object.keys(modules).length > 0 && (
+        <Panel title="Modules">
+          <ul className="space-y-2">
+            {Object.entries(modules).map(([path, purpose]) => (
+              <li key={path} className="flex gap-2 rounded-lg border border-line bg-panel-2 p-2 text-xs">
+                <code className="mono shrink-0 text-brand">{path}</code>
+                <span className="text-ice">{purpose}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      {apis.length > 0 && (
+        <Panel title="API Routes">
+          <ul className="space-y-1 text-xs text-ice">
+            {apis.map((api, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-2">
+                <span className="mono rounded bg-panel-2 px-1.5 py-0.5 font-semibold text-brand">
+                  {String(api.method ?? "GET")}
+                </span>
+                <code className="mono">{String(api.path ?? "")}</code>
+                <span className="text-faint">{String(api.purpose ?? "")}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      {models.length > 0 && (
+        <Panel title="Data Models">
+          <ul className="space-y-1 text-xs text-ice">
+            {models.map((m, i) => (
+              <li key={i}>
+                <code className="mono text-brand">{String(m.name ?? "Model")}</code>
+                <span className="text-faint"> — {String(m.fields ?? "")}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      {Object.keys(deps).length > 0 && (
+        <Panel title="Key Dependencies">
+          <ul className="space-y-1 text-xs text-ice">
+            {Object.entries(deps).map(([pkg, why]) => (
+              <li key={pkg}>
+                <code className="mono text-brand">{pkg}</code>
+                <span className="text-faint"> — {why}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+    </div>
+  );
 }
