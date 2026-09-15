@@ -30,6 +30,44 @@ def _py(project_dir: Path, *args: str) -> list[str]:
     return [str(project_dir / VENV_DIRNAME / "bin" / "python"), *args]
 
 
+_INVALID_FNAME_CHARS = {chr(c) for c in range(32)} | {'"', "*", "<", ">", "?", "|"}
+_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def sanitize_rel_path(rel: str) -> str | None:
+    """Normalize a model-supplied relative path into a safe, writable one.
+    Returns None if the path cannot be salvaged (empty, traversal, invalid)."""
+    if not isinstance(rel, str):
+        return None
+    cleaned = rel.replace("\\", "/").strip()
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    cleaned = cleaned.lstrip("/")
+    if cleaned.endswith("/"):
+        cleaned = cleaned.rstrip("/")
+    segments = [seg for seg in cleaned.split("/") if seg not in ("", ".")]
+    if not segments:
+        return None
+    out: list[str] = []
+    for seg in segments:
+        if seg in ("..", "."):
+            return None
+        seg = seg.strip().rstrip(".")
+        seg = "".join(ch for ch in seg if ch not in _INVALID_FNAME_CHARS)
+        seg = seg.strip()
+        # reject suspicious extensionless names with embedded whitespace (LLM junk)
+        if any(ch.isspace() for ch in seg) and "." not in seg:
+            return None
+        if not seg or len(seg) > 200 or seg.upper() in _RESERVED_NAMES:
+            return None
+        out.append(seg)
+    return "/".join(out)
+
+
 async def _run_subprocess(
     cmd: list[str], cwd: Path, timeout: int
 ) -> tuple[int, str, bool]:
@@ -57,7 +95,10 @@ async def _run_subprocess(
 def write_project_files(project_dir: Path, files: dict[str, str]) -> None:
     project_dir.mkdir(parents=True, exist_ok=True)
     for rel, content in files.items():
-        target = project_dir / rel
+        safe = sanitize_rel_path(rel) or rel.strip()
+        if not safe:
+            continue
+        target = project_dir / safe
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 

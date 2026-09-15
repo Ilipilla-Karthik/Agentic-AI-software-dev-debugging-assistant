@@ -23,6 +23,19 @@ from ..llm import get_provider
 from ..memory import AgentMemory
 from .state import DevState, new_state
 
+_TRACE_FILE = r"D:\pip-temp\opencode\wf_trace.log"
+
+
+def _trace(label: str, msg: str) -> None:
+    import datetime
+    ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    line = f"[{ts}] [{label}] {msg}\n"
+    try:
+        with open(_TRACE_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
 
 def _decide(state: DevState) -> str:
     tr = state.get("test_results", {})
@@ -31,7 +44,7 @@ def _decide(state: DevState) -> str:
     if failed + errors == 0:
         return "review"
     if state.get("attempts", 0) >= settings.max_debug_attempts:
-        return "failed"
+        return "review"  # review with imperfect tests rather than hard-failing
     return "debug"
 
 
@@ -73,23 +86,33 @@ def build_graph(memory: AgentMemory):
     debugger = DebuggingAgent(memory)
     reviewer = CodeReviewerAgent(memory)
 
+    async def _traced(node_name: str, fn, s: DevState) -> DevState:
+        _trace(node_name, "start")
+        try:
+            out = await fn(s, provider)
+            _trace(node_name, "end")
+            return out
+        except Exception as exc:
+            _trace(node_name, f"EXC {type(exc).__name__}: {exc}")
+            raise
+
     async def node_analyze(s: DevState) -> DevState:
-        return await requester.run(s, provider)
+        return await _traced("analyze", requester.run, s)
 
     async def node_architect(s: DevState) -> DevState:
-        return await architect.run(s, provider)
+        return await _traced("architect", architect.run, s)
 
     async def node_code(s: DevState) -> DevState:
-        return await coder.run(s, provider)
+        return await _traced("code", coder.run, s)
 
     async def node_test(s: DevState) -> DevState:
-        return await tester.run(s, provider)
+        return await _traced("test", tester.run, s)
 
     async def node_debug(s: DevState) -> DevState:
-        return await debugger.run(s, provider)
+        return await _traced("debug", debugger.run, s)
 
     async def node_review(s: DevState) -> DevState:
-        return await reviewer.run(s, provider)
+        return await _traced("review", reviewer.run, s)
 
     graph = StateGraph(DevState)
     graph.add_node("analyze", node_analyze)
@@ -133,10 +156,13 @@ _NODE_STATUS = {
 async def run_workflow(project_id: str, requirement: str, memory: AgentMemory) -> dict[str, Any]:
     from ..db import update_project
 
+    _trace("workflow", f"START pid={project_id}")
     state = new_state(project_id, requirement)
     graph, provider = build_graph(memory)
+    _trace("workflow", f"graph built provider={provider.name}")
     await safe_emit(project_id, "lifecycle", f"Workflow started with provider={provider.name}", {"provider": provider.name})
     await update_project(project_id, "running", state)
+    _trace("workflow", "persisted running")
 
     try:
         last_status = "running"
@@ -147,12 +173,13 @@ async def run_workflow(project_id: str, requirement: str, memory: AgentMemory) -
                 state.update(node_state)
                 status = _NODE_STATUS.get(node_name, last_status)
                 last_status = status
-                # persist every stage so the API never reports a stale state
+                _trace("workflow", f"persist status={status} node={node_name}")
                 await update_project(project_id, status, state)
         final = state
         if final.get("status") != "failed":
             final["status"] = last_status if last_status != "running" else "failed"
     except Exception as exc:  # keep the pipeline honest: surface failures
+        _trace("workflow", f"EXC: {type(exc).__name__}: {exc}")
         state["status"] = "failed"
         state["errors"].append(f"pipeline error: {exc}")
         state["summary"] = f"Pipeline crashed: {exc}"

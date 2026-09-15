@@ -50,10 +50,12 @@ def read_file_tool(project_dir: Path) -> tuple[ToolDef, Callable]:
 
 def write_file_tool(project_dir: Path) -> tuple[ToolDef, Callable]:
     def exec(call: ToolCall) -> str:
-        rel = call.arguments.get("path", "")
+        from ..sandbox.executor import sanitize_rel_path
+
+        rel = sanitize_rel_path(call.arguments.get("path", ""))
         content = call.arguments.get("content", "")
         if not rel:
-            return "[error] missing path"
+            return "[error] invalid path"
         target = project_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")

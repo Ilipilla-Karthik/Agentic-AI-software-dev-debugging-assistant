@@ -17,6 +17,21 @@ from typing import Any, Callable
 from ..schemas import ExecutionResult, ReviewResult
 from .base import LLMProvider, ToolCall, ToolDef, extract_json, parse_fixed_files
 
+_TRACE_LLM_FILE = r"D:\pip-temp\opencode\llm_trace.log"
+
+
+def _trace_llm(step: str, raw: str, nfiles: int) -> None:
+    import datetime
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    head = raw[:400].replace("\n", "\\n")
+    tail = raw[-200:].replace("\n", "\\n")
+    line = f"[{ts}] {step} files={nfiles} len={len(raw)} HEAD={head} TAIL={tail}\n"
+    try:
+        with open(_TRACE_LLM_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
 _SYSTEM_DEV = (
     "You are a senior software engineer inside an autonomous development pipeline. "
     "You produce complete, correct, modern Python files. "
@@ -62,7 +77,14 @@ class OpenAIProvider(LLMProvider):
         kwargs: dict = {}
         if self._settings.openai_base_url.strip():
             kwargs["base_url"] = self._settings.openai_base_url
-        self.client = AsyncOpenAI(api_key=self._settings.openai_api_key, **kwargs)
+        # Hard ceilings so a hung upstream can never stall the pipeline:
+        # client-level 120s per operation, plus an asyncio.watchdog below.
+        self.client = AsyncOpenAI(
+            api_key=self._settings.openai_api_key,
+            timeout=120.0,
+            max_retries=1,
+            **kwargs,
+        )
         self.model = model or self._settings.openai_model
 
     async def complete(
@@ -83,15 +105,22 @@ class OpenAIProvider(LLMProvider):
         }
         last_exc: Exception | None = None
         retryable = {408, 429, 500, 502, 503, 504}
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                resp = await self.client.chat.completions.create(**kwargs)
-                return resp.choices[0].message.content or ""
+                print(f"[llm] attempt={attempt} {system.strip()[:60]!r}", flush=True)
+                resp = await asyncio.wait_for(
+                    self.client.chat.completions.create(**kwargs), timeout=300
+                )
+                text = resp.choices[0].message.content or ""
+                print(f"[llm] OK {len(text)} chars in {attempt}", flush=True)
+                return text
             except Exception as exc:  # noqa: BLE001 - transient rate/faults from aggregators
                 import openai
 
                 status = getattr(exc, "status_code", None)
-                if not isinstance(exc, (openai.RateLimitError, openai.APIStatusError, openai.APIConnectionError)):
+                if isinstance(exc, TimeoutError):
+                    status = 408  # hung upstream / watchdog - retry safe
+                if not isinstance(exc, (openai.RateLimitError, openai.APIStatusError, openai.APIConnectionError)) and not isinstance(exc, TimeoutError):
                     raise
                 if status is not None and status not in retryable:
                     raise  # 400/401/403/404 are not transient
@@ -110,15 +139,14 @@ class OpenAIProvider(LLMProvider):
 
     async def analyze(self, requirement: str) -> str:
         prompt = (
-            "Analyze the following software requirement and produce a technical "
-            "requirements report (markdown) with: goals, functional requirements, "
-            "non-functional requirements, derived acceptance criteria, and risks. "
+            "Analyze the following software requirement and produce a SHORT technical "
+            "requirements report (max 12 lines): goals, key features, acceptance criteria, risks. "
             "No code fences, plain markdown only.\n\n"
             f"REQUIREMENT:\n{requirement}"
         )
         report = await self.complete(
-            "You are a requirements analyst. Be precise and structured.", prompt,
-            temperature=0.3, max_tokens=8000,
+            "You are a requirements analyst. Be precise, structured and CONCISE.", prompt,
+            temperature=0.1, max_tokens=1200,
         )
         return self._strip_fences(report)
 
@@ -126,10 +154,10 @@ class OpenAIProvider(LLMProvider):
         prompt = (
             "Break this project into an ordered development plan of concrete steps "
             "(requirement analysis, architecture, coding, testing, debugging, review, "
-            "documentation). Return a JSON array of strings only.\n\n"
+            "documentation). Return a JSON array of at most 7 short strings.\n\n"
             f"REQUIREMENT:\n{requirement}\n\nANALYSIS:\n{analysis}"
         )
-        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.3, max_tokens=3000)
+        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.1, max_tokens=800)
         data = extract_json(raw)
         if isinstance(data, list):
             return [str(x) for x in data]
@@ -146,7 +174,7 @@ class OpenAIProvider(LLMProvider):
             "data_models (list of {name, fields}), dependencies (dict), rationale (string).\n\n"
             f"REQUIREMENT:\n{requirement}\n\nANALYSIS:\n{analysis}\n\nPLAN:\n{json.dumps(plan)}"
         )
-        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.3, max_tokens=4000)
+        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.2, max_tokens=2000)
         data = extract_json(raw)
         if not isinstance(data, dict) or not data.get("modules"):
             retry = await self.complete(
@@ -159,7 +187,7 @@ class OpenAIProvider(LLMProvider):
                 f"Do not leave any key empty.\n\nREQUIREMENT:\n{requirement}",
                 json_mode=True,
                 temperature=0.3,
-                max_tokens=4000,
+                max_tokens=2000,
             )
             data = extract_json(retry)
         return _coerce_architecture(data, requirement, analysis)
@@ -168,32 +196,65 @@ class OpenAIProvider(LLMProvider):
         self, requirement: str, analysis: str, architecture: dict[str, Any]
     ) -> dict[str, str]:
         prompt = (
-            "Generate the complete application source for this requirement. Include "
-            "requirements.txt, README.md, and all application modules. Return ONE raw "
-            "JSON object: {relative_path: file_contents}.\n\n"
+            "Implement ONLY the core working application for this requirement. "
+            "Use a MINIMUM number of files (1-4), zero or very short docstrings, compact "
+            "code. Include requirements.txt (one dependency per line) and README.md "
+            "(5 lines). Keep every file SHORT.\n"
+            "Return ONE raw JSON object: {relative_path: file_contents}.\n\n"
             f"REQUIREMENT:\n{requirement}\n\nANALYSIS:\n{analysis}\n\n"
-            f"ARCHITECTURE:\n{json.dumps(architecture, indent=2)}"
+            f"ARCHITECTURE:\n{json.dumps(architecture, indent=2)[:2000]}"
         )
-        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.4, max_tokens=30000)
-        return parse_fixed_files(raw)
+        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.2, max_tokens=10000)
+        files = parse_fixed_files(raw)
+        _trace_llm("generate_project", raw, len(files))
+        if not files:
+            # retry, demanding a compact single-module app
+            retry = await self.complete(
+                _SYSTEM_DEV,
+                "Return ONE raw JSON object: {relative_path: file_contents}. "
+                "Implement a COMPLETE but COMPACT working app (max 3 files, short code, "
+                "no verbose comments). Example keys only like \"main.py\", \"requirements.txt\", "
+                "\"README.md\". ONLY the raw JSON object.\n\n"
+                f"REQUIREMENT:\n{requirement}",
+                json_mode=True,
+                temperature=0.2,
+                max_tokens=8000,
+            )
+            files = parse_fixed_files(retry)
+            _trace_llm("generate_project(retry)", retry, len(files))
+        if not files:
+            # last resort: a single main.py with everything
+            fallback = await self.complete(
+                _SYSTEM_DEV,
+                "Return ONE raw JSON object with a SINGLE key \"main.py\" whose value "
+                "is the complete runnable application as one script (short, working, no "
+                "tests). ONLY that one file.\n\n"
+                f"REQUIREMENT:\n{requirement}",
+                json_mode=True,
+                temperature=0.2,
+                max_tokens=6000,
+            )
+            files = parse_fixed_files(fallback)
+            _trace_llm("generate_project(fallback)", fallback, len(files))
+        return files
 
     async def generate_tests(self, project_files: dict[str, str]) -> dict[str, str]:
         if not project_files:
             return {}
         strategy = _detect_test_strategy(list(project_files.keys()))
         prompt = (
-            "Generate a thorough pytest suite (tests/ directory) that validates the "
-            "existing application: happy paths, error cases, and validation.\n\n"
+            "Generate a COMPACT pytest suite (tests/ directory) that validates the "
+            "existing application: a few happy paths, one error case. Keep tests SHORT.\n\n"
             "IMPORTANT: import ONLY from modules that exist in EXISTING FILES below. "
             "If a module lives at the project root (e.g. converter.py) and you import it, "
             "also generate tests/conftest.py that inserts the project root into sys.path "
             "(dirname(dirname(abspath(__file__)))).\n\n"
             f"TESTING STRATEGY FOR THIS PROJECT:\n{strategy}\n\n"
             "Return ONE raw JSON object of file paths -> contents (e.g. "
-            "\"tests/test_app.py\").\n\n"
-            f"EXISTING FILES:\n{json.dumps(project_files, indent=2, default=str)[:12000]}"
+            "\"tests/test_main.py\").\n\n"
+            f"EXISTING FILES:\n{json.dumps(project_files, indent=2, default=str)[:8000]}"
         )
-        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.3, max_tokens=20000)
+        raw = await self.complete(_SYSTEM_DEV, prompt, json_mode=True, temperature=0.2, max_tokens=6000)
         tests = parse_fixed_files(raw)
         if not tests:
             return {}
@@ -211,7 +272,7 @@ class OpenAIProvider(LLMProvider):
                 "invent packages that are not listed.\n"
                 'Return ONE raw JSON object of test file paths -> contents.'
             )
-            retry = await self.complete(_SYSTEM_DEV, fix_prompt, json_mode=True, temperature=0.2, max_tokens=20000)
+            retry = await self.complete(_SYSTEM_DEV, fix_prompt, json_mode=True, temperature=0.2, max_tokens=6000)
             fixed = parse_fixed_files(retry)
             if fixed:
                 tests = fixed
@@ -262,20 +323,20 @@ class OpenAIProvider(LLMProvider):
             f"REQUIREMENT:\n{requirement[:2000]}\n\n"
             f"TEST RESULTS: {result.passed} passed, {result.failed} failed, "
             f"{result.error} errors.\n\n"
-            f"FILES:\n{json.dumps(project_files, default=str)[:14000]}"
+            f"FILES:\n{json.dumps(project_files, default=str)[:6000]}"
         )
         _review_system = (
             "You are a strict code reviewer focusing on correctness, security, "
             "maintainability, and requirement coverage. If all tests pass and the "
             "implementation matches the requirement type (CLI vs API vs library), "
-            "set passed = true unless there is a critical defect."
+            "set passed = true unless there is a critical defect. Keep summary under 150 words."
         )
         raw = await self.complete(
             _review_system,
             prompt,
             json_mode=True,
             temperature=0.2,
-            max_tokens=8000,
+            max_tokens=3000,
         )
         data = extract_json(raw) or {}
         if "score" not in data or "summary" not in data:
@@ -287,7 +348,7 @@ class OpenAIProvider(LLMProvider):
                 prompt,
                 json_mode=True,
                 temperature=0.2,
-                max_tokens=8000,
+                max_tokens=3000,
             )
             data = extract_json(retry) or {}
         data = _fallback_review(data, result, requirement)
@@ -330,13 +391,16 @@ class OpenAIProvider(LLMProvider):
             for t in tools
         ]
         for step in range(max_steps):
-            resp = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=tool_defs or None,
-                tool_choice="auto" if tool_defs else None,
-                temperature=0.2,
-                max_tokens=16000,
+            resp = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=tool_defs or None,
+                    tool_choice="auto" if tool_defs else None,
+                    temperature=0.2,
+                    max_tokens=6000,
+                ),
+                timeout=240,
             )
             msg = resp.choices[0].message
             if not (msg.tool_calls or []):

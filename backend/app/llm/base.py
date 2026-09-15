@@ -129,19 +129,30 @@ def extract_json(text: str) -> Optional[Any]:
 
 def parse_fixed_files(raw: str) -> dict[str, str]:
     """Parse a model response into {path: content}. Expects a JSON object of
-    files or ```path fence blocks."""
+    files or ```path fence blocks. Invalid/garbage paths are dropped."""
+    from ..sandbox.executor import sanitize_rel_path
+
     files: dict[str, str] = {}
+
+    def _keep(k: str, v: object) -> bool:
+        return sanitize_rel_path(k) is not None and isinstance(v, str)
+
     data = extract_json(raw)
     if isinstance(data, dict):
         for k, v in data.items():
-            if isinstance(v, str) and (k.endswith(".py") or "." in k or k.startswith("app/") or k == "requirements.txt"):
+            if _keep(k, v) and (k.endswith(".py") or "." in k or k.startswith("app/") or k == "requirements.txt"):
                 files[k] = v
         if files:
             return files
-    # fence parsing: ```path
-    pattern = re.compile(r"```(?:[a-zA-Z0-9]*)\s*([^\n`]+?)\n(.*?)```", re.DOTALL)
+    # fence parsing: extract filename from tags like ```python, ```file.py, or plain ```
+    pattern = re.compile(r"```([^\n]*)\n(.*?)```", re.DOTALL)
     for m in pattern.finditer(raw):
-        path, content = m.group(1).strip().lstrip("/"), m.group(2)
-        if path and content is not None:
-            files[path] = content
+        tag, content = m.group(1).strip(), m.group(2)
+        if not content:
+            continue
+        # if tag looks like a filename (contains dot or slash), use it; else skip (lang-only fence)
+        path = tag if ("." in tag or "/" in tag) else ""
+        safe = sanitize_rel_path(path) if path else None
+        if safe:
+            files[safe] = content
     return files
